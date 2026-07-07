@@ -1,6 +1,6 @@
 import { cli, Strategy } from '@jackwener/opencli/registry';
 import { AuthRequiredError, EmptyResultError } from '@jackwener/opencli/errors';
-import { assertAuth, apiCall, MODULE_CONFIG, DOMAIN } from './shared.js';
+import { assertAuth, fetchModuleList, DOMAIN } from './shared.js';
 
 cli({
     site: 'xbongbong',
@@ -22,61 +22,66 @@ cli({
         const commonParams = await assertAuth(page);
         if (!commonParams) throw new AuthRequiredError(DOMAIN, '请先在浏览器登录销帮帮CRM');
 
-        const config = MODULE_CONFIG.customer;
-        const body = {
-            businessType: config.businessType,
-            subBusinessType: config.subBusinessType,
-            pageSize: args.limit || 20,
-            currentPage: args.page || 1,
-            queryParam: {},
-            poolFlag: true, // 标识查公海池
-        };
+        const resp = await fetchModuleList(page, 'pool', commonParams, { timeoutSec: 15 });
 
-        if (args.keyword) body.queryParam.searchContent = args.keyword;
-
-        // 公海池可能是独立接口或带 poolFlag 的客户列表
-        let resp = await apiCall(page, '/customer/pool/list', body, commonParams);
-
-        // fallback 到通用列表 + poolFlag
-        if (!resp.ok && resp.status === 404) {
-            resp = await apiCall(page, config.listPath, body, commonParams);
+        if (!resp || resp.code !== 1) {
+            throw new AuthRequiredError(DOMAIN, `请求失败: ${resp?.msg || 'unknown'}`);
         }
 
-        if (!resp.ok || !resp.data || resp.data.code !== 1) {
-            if (resp.status === 401) throw new AuthRequiredError(DOMAIN, 'Session已过期');
-            throw new AuthRequiredError(DOMAIN, `请求失败: ${resp.data?.msg || resp.error || 'unknown'}`);
-        }
-
-        const list = resp.data.data?.list || resp.data.data?.dataList || [];
+        const list = resp.result?.paasFormDataESList || resp.result?.list || resp.data?.list || resp.data?.dataList || [];
         if (list.length === 0) {
             throw new EmptyResultError('pool list', '公海池暂无客户');
         }
 
         const now = Date.now();
-        return list.map(item => {
-            const lastFollow = item.lastFollowTime || item.updateTime;
-            const idleDays = lastFollow ? Math.floor((now - lastFollow) / 86400000) : '';
+        let filtered = list;
+        if (args.keyword) {
+            const kw = args.keyword.toLowerCase();
+            filtered = list.filter(item => {
+                const d = item.data || {};
+                const name = (d.text_1 || d.customerName || '').toLowerCase();
+                return name.includes(kw);
+            });
+        }
 
-            // 如果设置了闲置天数筛选，客户端过滤
-            if (args.idle_days && idleDays && idleDays < args.idle_days) {
-                return null;
-            }
+        const results = filtered.map(item => {
+            const d = item.data || {};
+            const lastFollow = item.updateTime || item.addTime;
+            const lastMs = typeof lastFollow === 'number' ? (lastFollow < 1e12 ? lastFollow * 1000 : lastFollow) : 0;
+            const idleDays = lastMs ? Math.floor((now - lastMs) / 86400000) : '';
+
+            if (args.idle_days && idleDays && idleDays < args.idle_days) return null;
 
             return {
                 id: item.dataId || item.id || '',
-                name: item.text_1 || item.customerName || item.name || '',
-                phone: item.phone || item.mobile || '',
-                source: item.text_4 || item.source || '',
-                idle_days: idleDays ? String(idleDays) : '',
+                name: d.text_1 || d.customerName || '',
+                phone: extractPhone(d),
+                source: d.text_4 || d.source || '',
+                idle_days: idleDays !== '' ? String(idleDays) : '',
                 last_follow: formatTime(lastFollow),
-                return_reason: item.returnReason || item.reason || '',
+                return_reason: d.returnReason || '',
             };
-        }).filter(Boolean);
+        }).filter(Boolean).slice(0, args.limit || 20);
+
+        if (results.length === 0) {
+            throw new EmptyResultError('pool list', args.keyword ? `未找到匹配"${args.keyword}"的公海客户` : '公海池暂无客户');
+        }
+        return results;
     },
 });
 
+function extractPhone(d) {
+    if (d.subForm_1 && Array.isArray(d.subForm_1) && d.subForm_1.length > 0) {
+        return d.subForm_1[0].text_2 || '';
+    }
+    return d.phone || d.mobile || '';
+}
+
 function formatTime(ts) {
     if (!ts) return '';
-    if (typeof ts === 'number') return new Date(ts).toISOString().slice(0, 10);
+    if (typeof ts === 'number') {
+        const ms = ts < 1e12 ? ts * 1000 : ts;
+        return new Date(ms).toISOString().slice(0, 10);
+    }
     return String(ts);
 }

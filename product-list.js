@@ -27,7 +27,7 @@ cli({
             throw new AuthRequiredError(DOMAIN, `请求失败: ${resp?.msg || 'unknown'}`);
         }
 
-        const list = resp.data?.list || resp.data?.dataList || [];
+        const list = resp.result?.paasFormDataESList || resp.result?.list || resp.data?.list || resp.data?.dataList || [];
         if (list.length === 0) {
             throw new EmptyResultError('product list', args.keyword ? `未找到匹配"${args.keyword}"的产品` : '产品列表为空');
         }
@@ -36,7 +36,8 @@ cli({
         if (args.keyword) {
             const kw = args.keyword.toLowerCase();
             filtered = list.filter(item => {
-                const name = (item.text_1 || item.productName || item.name || '').toLowerCase();
+                const d = item.data || item;
+                const name = (d.text_1 || d.productName || d.name || '').toLowerCase();
                 return name.includes(kw);
             });
         }
@@ -48,23 +49,27 @@ cli({
             throw new EmptyResultError('product list', args.keyword ? `未找到匹配"${args.keyword}"的产品` : '产品列表为空');
         }
 
-        return results.map(item => ({
-            id: item.dataId || item.id || '',
-            name: item.text_1 || item.productName || item.name || '',
-            price: item.number_1 || item.price || '',
-            unit: item.text_2 || item.unit || '',
-            category: item.text_3 || item.category || '',
-            status: item.statusName || item.status || '',
-            stock: item.number_2 || item.stock || '',
-            created_at: formatTime(item.createTime || item.createdAt),
-        }));
+        return results.map(item => {
+            const d = item.data || {};
+            return {
+                id: item.dataId || item.id || '',
+                name: d.text_1 || d.productName || d.name || '',
+                price: d.number_1 || d.price || '',
+                unit: d.text_2 || d.unit || '',
+                category: d.text_3 || d.category || '',
+                status: d.statusName || d.status || '',
+                stock: d.number_2 || d.stock || '',
+                created_at: formatTime(item.addTime || item.createTime),
+            };
+        });
     },
 });
 
 function formatTime(ts) {
     if (!ts) return '';
     if (typeof ts === 'number') {
-        return new Date(ts).toISOString().slice(0, 16).replace('T', ' ');
+        const ms = ts < 1e12 ? ts * 1000 : ts;
+        return new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
     }
     return String(ts);
 }

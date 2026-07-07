@@ -28,7 +28,7 @@ cli({
             throw new AuthRequiredError(DOMAIN, `请求失败: ${resp?.msg || 'unknown'}`);
         }
 
-        const list = resp.data?.list || resp.data?.dataList || [];
+        const list = resp.result?.paasFormDataESList || resp.result?.list || resp.data?.list || resp.data?.dataList || [];
         if (list.length === 0) {
             throw new EmptyResultError('opportunity list', '暂无销售机会数据');
         }
@@ -37,8 +37,9 @@ cli({
         if (args.keyword) {
             const kw = args.keyword.toLowerCase();
             filtered = list.filter(item => {
-                const name = (item.text_1 || item.name || '').toLowerCase();
-                const customer = (item.customerName || item.relateCustomerName || '').toLowerCase();
+                const d = item.data || item;
+                const name = (d.text_1 || d.name || '').toLowerCase();
+                const customer = (d.customerName || d.relateCustomerName || '').toLowerCase();
                 return name.includes(kw) || customer.includes(kw);
             });
         }
@@ -50,21 +51,28 @@ cli({
             throw new EmptyResultError('opportunity list', '暂无匹配的销售机会数据');
         }
 
-        return results.map(item => ({
-            id: item.dataId || item.id || '',
-            name: item.text_1 || item.name || '',
-            customer: item.customerName || item.relateCustomerName || '',
-            amount: item.number_1 || item.amount || '',
-            stage: item.stageName || item.stage || '',
-            owner: item.ownerName || item.owner || '',
-            expected_close: formatTime(item.date_1 || item.expectedCloseDate),
-            created_at: formatTime(item.createTime),
-        }));
+        return results.map(item => {
+            const d = item.data || {};
+            const owner = typeof item.ownerId === 'string' ? item.ownerId : (Array.isArray(item.ownerId) && item.ownerId.length > 0 ? item.ownerId[0].name : (d.ownerName || ''));
+            return {
+                id: item.dataId || item.id || '',
+                name: d.text_1 || d.name || '',
+                customer: d.customerName || d.relateCustomerName || '',
+                amount: d.number_1 || d.amount || '',
+                stage: d.stageName || d.stage || '',
+                owner: owner,
+                expected_close: formatTime(d.date_1 || d.expectedCloseDate),
+                created_at: formatTime(item.addTime || item.createTime),
+            };
+        });
     },
 });
 
 function formatTime(ts) {
     if (!ts) return '';
-    if (typeof ts === 'number') return new Date(ts).toISOString().slice(0, 10);
+    if (typeof ts === 'number') {
+        const ms = ts < 1e12 ? ts * 1000 : ts;
+        return new Date(ms).toISOString().slice(0, 10);
+    }
     return String(ts);
 }

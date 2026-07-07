@@ -49,12 +49,16 @@ cli({
         }
 
         // 3. 构建 dataList
+        // 注意：租户配置要求手机必填。如果用户没传，报错提示。
+        if (!args.phone) {
+            throw new ArgumentError('客户电话必须填写（该租户配置了手机为必填项）', '请通过 --phone 传入');
+        }
+
         const dataList = {
             template: formConfig.formId,
             text_1: args.name,
             subForm_1: [],
             subForm_2: [],
-            address_1: args.address || null,
             text_4: args.source || null,
             text_12: null,
             text_18: args.remark || null,
@@ -62,19 +66,24 @@ cli({
             other_1: null,
         };
 
-        if (args.phone) {
-            dataList.subForm_1 = [{
-                text_1: { checked: true, isOther: 0, isVisible: 1, text: '手机', value: '2' },
-                text_2: args.phone,
-            }];
+        // address_1 需要完整地址结构（含 provinceCode/cityCode/districtCode），本CLI暂不支持
+        // 若用户传了 --address，追加到备注字段以避免丢失信息
+        if (args.address) {
+            const prefix = args.remark ? args.remark + ' | ' : '';
+            dataList.text_18 = prefix + '地址:' + args.address;
         }
+
+        dataList.subForm_1 = [{
+            text_1: { checked: true, isOther: 0, isVisible: 1, text: '手机', value: '2' },
+            text_2: args.phone,
+        }];
 
         // 4. 调用创建API（通过SPA内部HTTP客户端）
         const body = {
             appId: formConfig.appId,
             menuId: formConfig.menuId,
             formId: formConfig.formId,
-            saasMark: 2,
+            saasMark: 1,
             distributorMark: 0,
             businessType: formConfig.businessType,
             subBusinessType: formConfig.subBusinessType,
@@ -83,14 +92,27 @@ cli({
             dataList: dataList,
         };
 
+        function toMsg(v) {
+            if (v == null) return '';
+            if (typeof v === 'string') return v;
+            if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+            if (typeof v === 'object') {
+                try { return JSON.stringify(v).slice(0, 500); } catch { return '[unserializable]'; }
+            }
+            return String(v);
+        }
+
         const resp = await callSpaFormAdd(page, body);
+        if (process.env.XBB_DEBUG) process.stderr.write('[xbb-debug] customer-create resp=' + toMsg(resp) + '\n');
 
         if (!resp || resp.error) {
-            throw new CommandExecutionError(`创建客户失败: ${resp?.message || 'unknown error'}`);
+            const full = toMsg(resp);
+            throw new CommandExecutionError(`创建客户失败: ${full || 'unknown error'}`);
         }
 
         if (resp.code !== 1) {
-            throw new CommandExecutionError(`创建客户失败: ${resp.msg || '未知错误'}`);
+            const full = toMsg(resp);
+            throw new CommandExecutionError(`创建客户失败: ${full || '未知错误'}`);
         }
 
         const result = resp.result || resp;

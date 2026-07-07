@@ -23,7 +23,6 @@ const MODULE_CONFIG = {
         businessType: 100, subBusinessType: 101,
         listPath: '/list/customer',
         hashBase: '/crm/customer',
-        // 以下为默认值，动态获取失败时使用（来自templateList响应）
         appId: 1239836, menuId: 13466040, formId: 12090314,
     },
     contact: {
@@ -32,11 +31,13 @@ const MODULE_CONFIG = {
         hashBase: '/crm/contact',
         appId: null, menuId: null, formId: null,
     },
+    // Real SPA params captured from XHR:
+    // /list/opportunity  businessType=301 subBusinessType=302 appId=1239836 menuId=13466044 formId=12090319
     opportunity: {
-        businessType: 200, subBusinessType: 201,
-        listPath: '/list/salesOpportunity',
+        businessType: 301, subBusinessType: 302,
+        listPath: '/list/opportunity',
         hashBase: '/crm/opportunity',
-        appId: null, menuId: null, formId: null,
+        appId: 1239836, menuId: 13466044, formId: 12090319,
     },
     quotation: {
         businessType: 200, subBusinessType: 202,
@@ -44,23 +45,26 @@ const MODULE_CONFIG = {
         hashBase: '/crm/quotation',
         appId: null, menuId: null, formId: null,
     },
+    // /list/contract  businessType=201 subBusinessType=201 appId=1239836 menuId=13466046 formId=12090321
     contract: {
-        businessType: 200, subBusinessType: 203,
+        businessType: 201, subBusinessType: 201,
         listPath: '/list/contract',
         hashBase: '/crm/contract',
-        appId: null, menuId: null, formId: null,
+        appId: 1239836, menuId: 13466046, formId: 12090321,
     },
+    // /list/product  businessType=2401 subBusinessType=2401 appId=1239837 menuId=13466039 formId=12090313
     product: {
-        businessType: 300, subBusinessType: 301,
+        businessType: 2401, subBusinessType: 2401,
         listPath: '/list/product',
         hashBase: '/product/productManagement',
-        appId: null, menuId: null, formId: null,
+        appId: 1239837, menuId: 13466039, formId: 12090313,
     },
+    // /list/paymentSheet  businessType=702 subBusinessType=702 appId=1239838 menuId=13466068 formId=12090336
     payment: {
-        businessType: 400, subBusinessType: 401,
+        businessType: 702, subBusinessType: 702,
         listPath: '/list/paymentSheet',
-        hashBase: '/fund/payment',
-        appId: null, menuId: null, formId: null,
+        hashBase: '/fund/moneyOrder',
+        appId: 1239838, menuId: 13466068, formId: 12090336,
     },
     refund: {
         businessType: 200, subBusinessType: 205,
@@ -73,6 +77,13 @@ const MODULE_CONFIG = {
         listPath: '/list/followup',
         hashBase: '/crm/communicate',
         appId: null, menuId: null, formId: null,
+    },
+    // 公海池 (publicCustomer): subBusinessType=105 menuId=13466056 hashBase=/crm/customer
+    pool: {
+        businessType: 100, subBusinessType: 105,
+        listPath: '/list/publicCustomer',
+        hashBase: '/crm/customer',
+        appId: 1239836, menuId: 13466056, formId: 12090314,
     },
 };
 
@@ -203,7 +214,7 @@ export async function getModuleFormConfig(page, commonParams, moduleName) {
                 appId: 0,
                 menuId: 0,
                 formId: 0,
-                saasMark: 2,
+                saasMark: 1,
                 distributorMark: 0,
                 businessType: ${config.businessType},
                 subBusinessType: ${config.subBusinessType},
@@ -385,7 +396,7 @@ async function ensureSpaHttpClient(page) {
             appId: ${config.appId || 1239836},
             menuId: ${config.menuId || 13466040},
             formId: ${config.formId || 12090314},
-            saasMark: 2,
+            saasMark: 1,
             distributorMark: 0,
             businessType: ${config.businessType},
             subBusinessType: ${config.subBusinessType},
@@ -456,16 +467,30 @@ export async function callSpaFormAdd(page, params, opts = {}) {
 
     const paramsJson = JSON.stringify(params);
     const result = await page.evaluate(`(() => {
-        return new Promise((resolve, reject) => {
+        function safeStr(v) {
+            if (v == null) return '';
+            if (typeof v === 'string') return v;
+            try { return JSON.stringify(v); } catch { return String(v); }
+        }
+        return new Promise((resolve) => {
             const fn = window.__xbb_save_fn__ || window.__xbb_request__;
-            if (!fn) { reject(new Error('HTTP client not initialized')); return; }
-            const timer = setTimeout(() => reject(new Error('API call timeout')), ${timeoutSec * 1000});
-            fn(${paramsJson}).then(resp => {
+            if (!fn) { resolve({ error: true, message: 'HTTP client not initialized' }); return; }
+            const timer = setTimeout(() => resolve({ error: true, message: 'API call timeout' }), ${timeoutSec * 1000});
+            Promise.resolve(fn(${paramsJson})).then(resp => {
                 clearTimeout(timer);
                 resolve(resp);
             }).catch(err => {
                 clearTimeout(timer);
-                resolve({ error: true, message: err.message || String(err) });
+                // Axios errors: try err.response.data (real backend message)
+                let payload = null;
+                try {
+                    if (err && err.response && err.response.data) payload = err.response.data;
+                } catch (_) {}
+                const msg = (err && err.message) ||
+                            (payload && (payload.msg || payload.message || payload.error)) ||
+                            safeStr(payload) ||
+                            safeStr(err);
+                resolve({ error: true, message: msg, raw: payload || safeStr(err) });
             });
         });
     })()`);

@@ -1,6 +1,6 @@
 import { cli, Strategy } from '@jackwener/opencli/registry';
 import { AuthRequiredError, CommandExecutionError, ArgumentError } from '@jackwener/opencli/errors';
-import { assertAuth, apiCall, getModuleFormConfig, DOMAIN } from './shared.js';
+import { assertAuth, callSpaFormAdd, getModuleFormConfig, MODULE_CONFIG, DOMAIN } from './shared.js';
 
 cli({
     site: 'xbongbong',
@@ -30,24 +30,28 @@ cli({
         // 获取产品模块的 formId/menuId
         let formConfig = await getModuleFormConfig(page, commonParams, 'product');
         if (!formConfig) {
-            // fallback: 使用产品模块的通用配置
+            // fallback: 使用 MODULE_CONFIG 中的静态配置
+            const c = MODULE_CONFIG.product;
             formConfig = {
-                formId: null, // 需要动态获取
-                menuId: null,
-                appId: null,
-                businessType: 300,
-                subBusinessType: 301,
+                formId: c.formId,
+                menuId: c.menuId,
+                appId: c.appId,
+                businessType: c.businessType,
+                subBusinessType: c.subBusinessType,
             };
-            throw new CommandExecutionError('无法获取产品模块配置，请确认销帮帮CRM中已配置产品模块');
         }
 
         // 构建产品 dataList
+        // 注意: 销帮帮产品表单要求"产品编号"必填，本CLI自动生成
+        const autoCode = 'AUTO-' + Date.now();
+
         const dataList = {
             template: formConfig.formId,
             text_1: args.name,                    // 产品名称
+            text_2: autoCode,                     // 产品编号（自动生成）
             number_1: args.price || null,         // 单价
-            text_2: args.unit || null,            // 单位
-            text_3: args.category || null,        // 分类
+            text_3: args.unit || null,            // 单位
+            text_4: args.category || null,        // 分类
             textarea_1: args.description || null, // 描述
         };
 
@@ -55,23 +59,35 @@ cli({
             appId: formConfig.appId,
             menuId: formConfig.menuId,
             formId: formConfig.formId,
+            saasMark: 2,
+            distributorMark: 0,
             businessType: formConfig.businessType,
             subBusinessType: formConfig.subBusinessType,
+            groupNumber: '',
+            isBatch: 0,
             dataList: dataList,
         };
 
-        const resp = await apiCall(page, '/form/data/add', body, commonParams);
-
-        if (!resp.ok || !resp.data) {
-            if (resp.status === 401) throw new AuthRequiredError(DOMAIN, 'Session已过期');
-            throw new CommandExecutionError(`创建产品失败: ${resp.data?.msg || resp.error || 'HTTP ' + resp.status}`);
+        function toMsg(v) {
+            if (v == null) return '';
+            if (typeof v === 'string') return v;
+            if (typeof v === 'object') { try { return JSON.stringify(v).slice(0, 500); } catch { return '[unserializable]'; } }
+            return String(v);
         }
 
-        if (resp.data.code !== 1) {
-            throw new CommandExecutionError(`创建产品失败: ${resp.data.msg || '未知错误'}`);
+        const resp = await callSpaFormAdd(page, body);
+        if (process.env.XBB_DEBUG) process.stderr.write('[xbb-debug] product-create resp=' + toMsg(resp) + '\n');
+
+        if (!resp || resp.error) {
+            throw new CommandExecutionError(`创建产品失败: ${toMsg(resp) || 'unknown error'}`);
         }
 
-        const newId = resp.data.data?.dataId || resp.data.data?.id || 'unknown';
+        if (resp.code !== 1) {
+            throw new CommandExecutionError(`创建产品失败: ${toMsg(resp) || '未知错误'}`);
+        }
+
+        const result = resp.result || resp;
+        const newId = result.dataId || result.formDataId || result.id || 'unknown';
 
         return [{
             id: String(newId),

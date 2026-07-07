@@ -1,6 +1,7 @@
 {
   "name": "opencli-plugin-xbongbong",
   "version": "0.1.0",
+  "type": "module",
   "description": "OpenCLI plugin for 销帮帮CRM - CLI commands for customer, product, contract, payment, followup and more",
   "keywords": ["opencli", "plugin", "xbongbong", "crm", "销帮帮"],
   "author": "darinouyang",
